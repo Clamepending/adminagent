@@ -745,8 +745,14 @@ class SimpleAgentTests(unittest.TestCase):
             and str(evt.get("session_id", "")).strip() == "s-progress"
         ]
         self.assertTrue(progress_events)
-        trace = (progress_events[0].get("tool_trace") or [{}])[0]
-        self.assertEqual(trace.get("tool"), "web_search")
+        traces = []
+        for evt in progress_events:
+            traces.extend(evt.get("tool_trace") or [])
+        self.assertTrue(traces)
+        self.assertTrue(any(str(t.get("tool", "")).strip() == "web_search" for t in traces))
+        statuses = {str(t.get("status", "")).strip() for t in traces}
+        self.assertIn("running", statuses)
+        self.assertIn("ok", statuses)
 
     @patch("app.requests.get")
     @patch("app.requests.post")

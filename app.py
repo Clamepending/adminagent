@@ -3730,8 +3730,38 @@ def create_app() -> Flask:
         forced_mcp_retry = False
         tool_trace: List[Dict[str, Any]] = []
 
+        def _new_tool_call_id(step: int) -> str:
+            return f"tc_{max(1, int(step))}_{uuid.uuid4().hex[:8]}"
+
+        def _emit_tool_trace_start(
+            *,
+            call_id: str,
+            tool: str,
+            source: str,
+            arguments: Dict[str, Any],
+        ) -> None:
+            if on_tool_trace is None:
+                return
+            try:
+                on_tool_trace(
+                    {
+                        "call_id": str(call_id or "").strip() or f"tc_{uuid.uuid4().hex[:8]}",
+                        "tool": str(tool or "").strip(),
+                        "source": str(source or "").strip() or "builtin",
+                        "arguments": arguments if isinstance(arguments, dict) else {},
+                        "status": "running",
+                        "ok": None,
+                        "result": None,
+                        "error": None,
+                        "latency_ms": 0,
+                    }
+                )
+            except Exception:
+                pass
+
         def _record_tool_trace(
             *,
+            call_id: str,
             step: int,
             tool: str,
             source: str,
@@ -3743,10 +3773,11 @@ def create_app() -> Flask:
         ) -> None:
             tool_trace.append(
                 {
-                    "call_id": f"tc_{max(1, int(step))}",
+                    "call_id": str(call_id or "").strip() or f"tc_{max(1, int(step))}_{uuid.uuid4().hex[:8]}",
                     "tool": str(tool or "").strip(),
                     "source": str(source or "").strip() or "builtin",
                     "arguments": arguments if isinstance(arguments, dict) else {},
+                    "status": "ok" if bool(ok) else "error",
                     "ok": bool(ok),
                     "result": result if isinstance(result, dict) else None,
                     "error": str(error or "").strip() or None,
@@ -3775,18 +3806,40 @@ def create_app() -> Flask:
                         "tool_trace": tool_trace,
                     }
                 started = time.time()
-                mcp_result = mcp_broker.call_tool(full_name=tool_name, arguments=args, bot_id=bot_id)
-                mcp_call_happened = True
-                _record_tool_trace(
-                    step=step,
+                call_id = _new_tool_call_id(step)
+                _emit_tool_trace_start(
+                    call_id=call_id,
                     tool=tool_name,
                     source="mcp",
                     arguments=args,
-                    ok=True,
-                    result={"bot_id": bot_id, "tool": tool_name, "result": mcp_result},
-                    error=None,
-                    started_at=started,
                 )
+                try:
+                    mcp_result = mcp_broker.call_tool(full_name=tool_name, arguments=args, bot_id=bot_id)
+                    mcp_call_happened = True
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool=tool_name,
+                        source="mcp",
+                        arguments=args,
+                        ok=True,
+                        result={"bot_id": bot_id, "tool": tool_name, "result": mcp_result},
+                        error=None,
+                        started_at=started,
+                    )
+                except Exception as exc:
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool=tool_name,
+                        source="mcp",
+                        arguments=args,
+                        ok=False,
+                        result=None,
+                        error=str(exc),
+                        started_at=started,
+                    )
+                    raise
                 messages.append({"role": "assistant", "content": assistant_text})
                 messages.append(
                     {
@@ -3803,17 +3856,39 @@ def create_app() -> Flask:
             web_search_query = _extract_web_search_query(assistant_text)
             if web_search_query:
                 started = time.time()
-                web_result = _web_search(web_search_query)
-                _record_tool_trace(
-                    step=step,
+                call_id = _new_tool_call_id(step)
+                _emit_tool_trace_start(
+                    call_id=call_id,
                     tool="web_search",
                     source="builtin",
                     arguments={"value": web_search_query},
-                    ok=True,
-                    result={"bot_id": bot_id, **web_result},
-                    error=None,
-                    started_at=started,
                 )
+                try:
+                    web_result = _web_search(web_search_query)
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="web_search",
+                        source="builtin",
+                        arguments={"value": web_search_query},
+                        ok=True,
+                        result={"bot_id": bot_id, **web_result},
+                        error=None,
+                        started_at=started,
+                    )
+                except Exception as exc:
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="web_search",
+                        source="builtin",
+                        arguments={"value": web_search_query},
+                        ok=False,
+                        result=None,
+                        error=str(exc),
+                        started_at=started,
+                    )
+                    raise
                 messages.append({"role": "assistant", "content": assistant_text})
                 messages.append(
                     {
@@ -3830,17 +3905,39 @@ def create_app() -> Flask:
             web_fetch_url = _extract_web_fetch_url(assistant_text)
             if web_fetch_url:
                 started = time.time()
-                web_result = _web_fetch(web_fetch_url)
-                _record_tool_trace(
-                    step=step,
+                call_id = _new_tool_call_id(step)
+                _emit_tool_trace_start(
+                    call_id=call_id,
                     tool="web_fetch",
                     source="builtin",
                     arguments={"value": web_fetch_url},
-                    ok=True,
-                    result={"bot_id": bot_id, **web_result},
-                    error=None,
-                    started_at=started,
                 )
+                try:
+                    web_result = _web_fetch(web_fetch_url)
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="web_fetch",
+                        source="builtin",
+                        arguments={"value": web_fetch_url},
+                        ok=True,
+                        result={"bot_id": bot_id, **web_result},
+                        error=None,
+                        started_at=started,
+                    )
+                except Exception as exc:
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="web_fetch",
+                        source="builtin",
+                        arguments={"value": web_fetch_url},
+                        ok=False,
+                        result=None,
+                        error=str(exc),
+                        started_at=started,
+                    )
+                    raise
                 messages.append({"role": "assistant", "content": assistant_text})
                 messages.append(
                     {
@@ -3857,17 +3954,40 @@ def create_app() -> Flask:
             gateway_call = _extract_gateway_tool_call(assistant_text)
             if gateway_call is not None:
                 started = time.time()
-                gateway_result = _handle_gateway_tool(bot_id=bot_id, call=gateway_call)
-                _record_tool_trace(
-                    step=step,
+                call_id = _new_tool_call_id(step)
+                gateway_args = gateway_call if isinstance(gateway_call, dict) else {}
+                _emit_tool_trace_start(
+                    call_id=call_id,
                     tool="gateway",
                     source="gateway",
-                    arguments=gateway_call if isinstance(gateway_call, dict) else {},
-                    ok=bool(gateway_result.get("ok", False)),
-                    result=gateway_result if isinstance(gateway_result, dict) else None,
-                    error=None,
-                    started_at=started,
+                    arguments=gateway_args,
                 )
+                try:
+                    gateway_result = _handle_gateway_tool(bot_id=bot_id, call=gateway_call)
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="gateway",
+                        source="gateway",
+                        arguments=gateway_args,
+                        ok=bool(gateway_result.get("ok", False)),
+                        result=gateway_result if isinstance(gateway_result, dict) else None,
+                        error=None,
+                        started_at=started,
+                    )
+                except Exception as exc:
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="gateway",
+                        source="gateway",
+                        arguments=gateway_args,
+                        ok=False,
+                        result=None,
+                        error=str(exc),
+                        started_at=started,
+                    )
+                    raise
                 messages.append({"role": "assistant", "content": assistant_text})
                 messages.append(
                     {
@@ -3883,12 +4003,20 @@ def create_app() -> Flask:
 
             if _extract_get_callback_url_call(assistant_text):
                 started = time.time()
+                call_id = _new_tool_call_id(step)
+                _emit_tool_trace_start(
+                    call_id=call_id,
+                    tool="get_callback_url",
+                    source="gateway",
+                    arguments={},
+                )
                 callback_result = {
                     "bot_id": bot_id,
                     "callback_url": _get_callback_url(),
                     "path": "/hooks/outward_inbox",
                 }
                 _record_tool_trace(
+                    call_id=call_id,
                     step=step,
                     tool="get_callback_url",
                     source="gateway",
@@ -3914,21 +4042,43 @@ def create_app() -> Flask:
             telegram_message = _extract_telegram_send_call(assistant_text)
             if telegram_message is not None:
                 started = time.time()
-                telegram_result = _send_telegram_tool_message(
-                    bot=bot,
-                    current_session_id=session_id,
-                    message_text=telegram_message,
-                )
-                _record_tool_trace(
-                    step=step,
+                call_id = _new_tool_call_id(step)
+                _emit_tool_trace_start(
+                    call_id=call_id,
                     tool="send_telegram_messege",
                     source="gateway",
                     arguments={"message": telegram_message},
-                    ok=bool(telegram_result.get("ok", False)),
-                    result=telegram_result if isinstance(telegram_result, dict) else None,
-                    error=None,
-                    started_at=started,
                 )
+                try:
+                    telegram_result = _send_telegram_tool_message(
+                        bot=bot,
+                        current_session_id=session_id,
+                        message_text=telegram_message,
+                    )
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="send_telegram_messege",
+                        source="gateway",
+                        arguments={"message": telegram_message},
+                        ok=bool(telegram_result.get("ok", False)),
+                        result=telegram_result if isinstance(telegram_result, dict) else None,
+                        error=None,
+                        started_at=started,
+                    )
+                except Exception as exc:
+                    _record_tool_trace(
+                        call_id=call_id,
+                        step=step,
+                        tool="send_telegram_messege",
+                        source="gateway",
+                        arguments={"message": telegram_message},
+                        ok=False,
+                        result=None,
+                        error=str(exc),
+                        started_at=started,
+                    )
+                    raise
                 messages.append({"role": "assistant", "content": assistant_text})
                 messages.append(
                     {
@@ -3978,17 +4128,39 @@ def create_app() -> Flask:
                 return {"assistant_text": "Shell access is disabled by configuration.", "tool_trace": tool_trace}
 
             started = time.time()
-            shell_result = _run_shell(shell_command)
-            _record_tool_trace(
-                step=step,
+            call_id = _new_tool_call_id(step)
+            _emit_tool_trace_start(
+                call_id=call_id,
                 tool="shell",
                 source="builtin",
                 arguments={"value": shell_command},
-                ok=bool(shell_result.get("ok", False)),
-                result={"bot_id": bot_id, **shell_result},
-                error=str(shell_result.get("error", "")).strip() or None,
-                started_at=started,
             )
+            try:
+                shell_result = _run_shell(shell_command)
+                _record_tool_trace(
+                    call_id=call_id,
+                    step=step,
+                    tool="shell",
+                    source="builtin",
+                    arguments={"value": shell_command},
+                    ok=bool(shell_result.get("ok", False)),
+                    result={"bot_id": bot_id, **shell_result},
+                    error=str(shell_result.get("error", "")).strip() or None,
+                    started_at=started,
+                )
+            except Exception as exc:
+                _record_tool_trace(
+                    call_id=call_id,
+                    step=step,
+                    tool="shell",
+                    source="builtin",
+                    arguments={"value": shell_command},
+                    ok=False,
+                    result=None,
+                    error=str(exc),
+                    started_at=started,
+                )
+                raise
             messages.append({"role": "assistant", "content": assistant_text})
             messages.append(
                 {
@@ -4894,6 +5066,9 @@ def create_app() -> Flask:
       background: #eef5f8;
       color: #315461;
       white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
     }
     .tool-call-state.ok {
       border-color: #b8dbc7;
@@ -4904,6 +5079,25 @@ def create_app() -> Flask:
       border-color: #e3c3c1;
       background: #fbefef;
       color: #8b3030;
+    }
+    .tool-call-state.running {
+      border-color: #c6d3ea;
+      background: #eef3fb;
+      color: #244b86;
+    }
+    .tool-call-state.running::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      border: 2px solid #7fa3da;
+      border-top-color: transparent;
+      animation: toolspin 0.8s linear infinite;
+      flex: 0 0 auto;
+    }
+    @keyframes toolspin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
     .tool-call-name {
       font-weight: 700;
@@ -5235,6 +5429,7 @@ def create_app() -> Flask:
     let sessionHistoryRequestSeq = 0;
     const pendingSessionIds = new Set();
     let activeToolStream = null;
+    const toolCallNodesByKey = new Map();
 
     const statusEl = document.getElementById("status");
     const botListEl = document.getElementById("botList");
@@ -5301,35 +5496,71 @@ def create_app() -> Flask:
       const entries = Array.isArray(toolTrace) ? toolTrace : [];
       if (!entries.length) return;
 
-      const group = document.createElement("div");
-      group.className = "tool-trace-group";
+      function entryState(entry) {
+        const status = String((entry || {}).status || "").trim().toLowerCase();
+        if (status === "running" || status === "pending" || status === "start") return "running";
+        if (status === "ok" || (entry || {}).ok === true) return "ok";
+        if (status === "error" || (entry || {}).ok === false || String((entry || {}).error || "").trim()) return "error";
+        return "running";
+      }
 
-      const title = document.createElement("div");
-      title.className = "tool-trace-title";
-      title.textContent = entries.length === 1 ? "1 Tool Call" : (entries.length + " Tool Calls");
-      group.appendChild(title);
+      function entryKey(entry, idx) {
+        const callId = String((entry || {}).call_id || "").trim();
+        if (callId) return callId;
+        return "tool_" + String(idx + 1) + "_" + toolEntryFingerprint(entry);
+      }
 
-      for (let i = 0; i < entries.length; i += 1) {
-        const entry = entries[i] || {};
-        const ok = !!entry.ok;
+      function renderToolNode(node, entry, fallbackIdx) {
+        const callId = String((entry || {}).call_id || "").trim() || ("tc_" + String(fallbackIdx + 1));
+        const latencyMs = Number((entry || {}).latency_ms || 0);
+        const state = entryState(entry);
+
+        node.state.className = "tool-call-state " + state;
+        node.state.textContent = state === "running" ? "RUNNING" : (state === "ok" ? "OK" : "ERROR");
+        node.name.textContent = String((entry || {}).tool || "tool");
+        node.meta.textContent = state === "running"
+          ? (callId + " \u2022 working...")
+          : (callId + " \u2022 " + String(latencyMs) + "ms");
+
+        node.payload.textContent = JSON.stringify(
+          {
+            status: state,
+            source: String((entry || {}).source || ""),
+            arguments: (entry || {}).arguments || {},
+            result: (entry || {}).result || null,
+            error: (entry || {}).error || null,
+          },
+          null,
+          2
+        );
+      }
+
+      function createToolNode(key) {
+        const group = document.createElement("div");
+        group.className = "tool-trace-group";
+
+        const title = document.createElement("div");
+        title.className = "tool-trace-title";
+        title.textContent = "1 Tool Call";
+        group.appendChild(title);
+
         const details = document.createElement("details");
         details.className = "tool-call";
         details.open = false;
+        details.dataset.callKey = key;
 
         const summary = document.createElement("summary");
         const state = document.createElement("span");
-        state.className = "tool-call-state " + (ok ? "ok" : "error");
-        state.textContent = ok ? "OK" : "ERROR";
+        state.className = "tool-call-state running";
+        state.textContent = "RUNNING";
 
         const name = document.createElement("span");
         name.className = "tool-call-name";
-        name.textContent = String(entry.tool || "tool");
+        name.textContent = "tool";
 
         const meta = document.createElement("span");
         meta.className = "tool-call-meta";
-        const callId = String(entry.call_id || ("tc_" + String(i + 1)));
-        const latencyMs = Number(entry.latency_ms || 0);
-        meta.textContent = callId + " \u2022 " + String(latencyMs) + "ms";
+        meta.textContent = "working...";
 
         summary.appendChild(state);
         summary.appendChild(name);
@@ -5338,26 +5569,32 @@ def create_app() -> Flask:
 
         const payload = document.createElement("pre");
         payload.className = "tool-call-payload";
-        payload.textContent = JSON.stringify(
-          {
-            source: String(entry.source || ""),
-            arguments: entry.arguments || {},
-            result: entry.result || null,
-            error: entry.error || null,
-          },
-          null,
-          2
-        );
+        payload.textContent = "{}";
         details.appendChild(payload);
         group.appendChild(details);
+        chatEl.appendChild(group);
+
+        const node = { key, group, details, state, name, meta, payload };
+        toolCallNodesByKey.set(key, node);
+        return node;
       }
 
-      chatEl.appendChild(group);
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i] || {};
+        const key = entryKey(entry, i);
+        let node = toolCallNodesByKey.get(key);
+        if (!node) {
+          node = createToolNode(key);
+        }
+        renderToolNode(node, entry, i);
+      }
+
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
     function clearChat() {
       chatEl.innerHTML = "";
+      toolCallNodesByKey.clear();
     }
 
     function setChips() {
@@ -5527,6 +5764,8 @@ def create_app() -> Flask:
     function toolEntryFingerprint(entry) {
       const obj = entry || {};
       return JSON.stringify({
+        call_id: String(obj.call_id || ""),
+        status: String(obj.status || ""),
         tool: String(obj.tool || ""),
         source: String(obj.source || ""),
         arguments: obj.arguments || {},
