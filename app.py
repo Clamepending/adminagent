@@ -4995,6 +4995,9 @@ def create_app() -> Flask:
       grid-template-columns: 320px 1fr;
       gap: 12px;
     }
+    .chat-layout.chat-layout-single {
+      grid-template-columns: 1fr;
+    }
     .sidebar {
       display: flex;
       flex-direction: column;
@@ -5330,12 +5333,12 @@ def create_app() -> Flask:
       <p id="status" class="status">Loading...</p>
     </header>
 
-    <div class="chip-row">
+    <div id="chipRow" class="chip-row">
       <span class="chip" id="activeBotChip">No BOT_ID selected</span>
       <span class="chip" id="activeSessionChip">No session</span>
     </div>
 
-    <section class="card top-bot-bar">
+    <section id="topBotBar" class="card top-bot-bar">
       <div class="bot-toolbar">
         <div class="col bot-select-col">
           <label for="botSelect" class="label">BOT_ID</label>
@@ -5365,8 +5368,8 @@ def create_app() -> Flask:
     </nav>
 
     <section class="tab-panel active" data-tab-panel="chat">
-      <div class="chat-layout">
-        <aside class="card sidebar">
+      <div id="chatLayout" class="chat-layout">
+        <aside id="sessionSidebar" class="card sidebar">
           <div class="panel-head">
             <h2 class="section-title" style="margin: 0;">Sessions</h2>
             <div class="row" style="margin: 0;">
@@ -5523,8 +5526,23 @@ def create_app() -> Flask:
     const pendingSessionIds = new Set();
     let activeToolStream = null;
     const toolCallNodesByKey = new Map();
+    const urlParams = new URLSearchParams(window.location.search);
+    const uiMode = String(urlParams.get("ui_mode") || "").trim().toLowerCase();
+
+    function isTruthyParam(name) {
+      const value = String(urlParams.get(name) || "").trim().toLowerCase();
+      return value === "1" || value === "true" || value === "yes" || value === "on";
+    }
+
+    const oneclickUiMode = uiMode === "oneclick";
+    const hideBotUi = oneclickUiMode || isTruthyParam("hide_bot_ui") || isTruthyParam("hide_bot_session");
+    const hideSessionUi = oneclickUiMode || isTruthyParam("hide_session_ui") || isTruthyParam("hide_bot_session");
 
     const statusEl = document.getElementById("status");
+    const chipRowEl = document.getElementById("chipRow");
+    const topBotBarEl = document.getElementById("topBotBar");
+    const chatLayoutEl = document.getElementById("chatLayout");
+    const sessionSidebarEl = document.getElementById("sessionSidebar");
     const botSelectEl = document.getElementById("botSelect");
     const sessionListEl = document.getElementById("sessionList");
     const chatEl = document.getElementById("chat");
@@ -5578,6 +5596,21 @@ def create_app() -> Flask:
     const tabPanels = Array.from(document.querySelectorAll("[data-tab-panel]"));
 
     function setStatus(text) { statusEl.textContent = text; }
+
+    function applyUiMode() {
+      if (hideBotUi && topBotBarEl) {
+        topBotBarEl.style.display = "none";
+      }
+      if (hideSessionUi) {
+        if (sessionSidebarEl) sessionSidebarEl.style.display = "none";
+        if (chatLayoutEl) chatLayoutEl.classList.add("chat-layout-single");
+      }
+      if (hideBotUi && hideSessionUi && chipRowEl) {
+        chipRowEl.style.display = "none";
+      }
+    }
+
+    applyUiMode();
 
     function addMessage(text, cls) {
       const el = document.createElement("div");
