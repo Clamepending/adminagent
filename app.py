@@ -4924,6 +4924,72 @@ def create_app() -> Flask:
       background: #dcecf2;
       border-color: #aac8d4;
     }
+    .top-bot-bar {
+      margin-bottom: 14px;
+      padding: 10px 12px;
+    }
+    .bot-toolbar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .bot-select-col {
+      flex: 1;
+      min-width: 250px;
+      max-width: 520px;
+    }
+    .create-dropdown {
+      position: relative;
+      min-width: 240px;
+    }
+    .create-dropdown summary {
+      list-style: none;
+      border: 1px solid #bed7df;
+      border-radius: 10px;
+      background: #f7fbfc;
+      color: #2c4a57;
+      padding: 9px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .create-dropdown summary::-webkit-details-marker { display: none; }
+    .create-dropdown summary::after {
+      content: "▾";
+      margin-left: auto;
+      color: #5a7481;
+      transition: transform 120ms ease;
+    }
+    .create-dropdown[open] summary::after { transform: rotate(180deg); }
+    .create-dropdown[open] summary {
+      border-color: var(--brand);
+      box-shadow: 0 7px 18px rgba(15, 127, 146, 0.16);
+      background: #f0fafc;
+    }
+    .create-dropdown-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 15;
+      width: min(360px, 94vw);
+      border: 1px solid #c8dde5;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 16px 40px rgba(8, 48, 61, 0.14);
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+    }
+    .create-dropdown-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
     .chat-layout {
       display: grid;
       grid-template-columns: 320px 1fr;
@@ -4953,6 +5019,7 @@ def create_app() -> Flask:
       overflow-y: auto;
       max-height: 230px;
     }
+    #sessionList.list { max-height: 520px; }
     .item {
       border: 1px solid #ccdde3;
       border-radius: 10px;
@@ -5231,6 +5298,20 @@ def create_app() -> Flask:
       .sidebar,
       .chat-main { min-height: 0; }
       .list { max-height: 180px; }
+      #sessionList.list { max-height: 280px; }
+      .bot-select-col,
+      .create-dropdown {
+        min-width: 0;
+        width: 100%;
+        max-width: none;
+      }
+      .create-dropdown-menu {
+        position: static;
+        width: 100%;
+        box-shadow: none;
+        border-style: dashed;
+        margin-top: 8px;
+      }
       .settings-grid,
       .memory-grid,
       .tool-list { grid-template-columns: 1fr; }
@@ -5254,6 +5335,27 @@ def create_app() -> Flask:
       <span class="chip" id="activeSessionChip">No session</span>
     </div>
 
+    <section class="card top-bot-bar">
+      <div class="bot-toolbar">
+        <div class="col bot-select-col">
+          <label for="botSelect" class="label">BOT_ID</label>
+          <select id="botSelect">
+            <option value="">No BOT_IDs yet</option>
+          </select>
+        </div>
+        <details id="createBotDropdown" class="create-dropdown">
+          <summary>Create Bot</summary>
+          <div class="create-dropdown-menu">
+            <input id="newBotName" type="text" placeholder="Bot name (optional)" />
+            <input id="newBotId" type="text" placeholder="bot_id (optional)" />
+            <div class="create-dropdown-actions">
+              <button id="createBotBtn" type="button">Create</button>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
     <nav class="tab-strip" role="tablist" aria-label="SimpleAgent sections">
       <button type="button" class="tab-btn active" data-tab-target="chat">Chat</button>
       <button type="button" class="tab-btn" data-tab-target="settings">Settings</button>
@@ -5266,15 +5368,6 @@ def create_app() -> Flask:
       <div class="chat-layout">
         <aside class="card sidebar">
           <div class="panel-head">
-            <h2 class="section-title">Bots</h2>
-          </div>
-          <div class="row">
-            <input id="newBotName" type="text" placeholder="Bot name (optional)" />
-            <button id="createBotBtn" type="button">Create</button>
-          </div>
-          <div id="botList" class="list"></div>
-
-          <div class="panel-head" style="margin-top: 10px;">
             <h2 class="section-title" style="margin: 0;">Sessions</h2>
             <div class="row" style="margin: 0;">
               <button id="newSessionBtn" type="button" class="btn-secondary">New</button>
@@ -5432,7 +5525,7 @@ def create_app() -> Flask:
     const toolCallNodesByKey = new Map();
 
     const statusEl = document.getElementById("status");
-    const botListEl = document.getElementById("botList");
+    const botSelectEl = document.getElementById("botSelect");
     const sessionListEl = document.getElementById("sessionList");
     const chatEl = document.getElementById("chat");
     const modelSelect = document.getElementById("modelSelect");
@@ -5440,6 +5533,8 @@ def create_app() -> Flask:
     const activeSessionChip = document.getElementById("activeSessionChip");
 
     const newBotNameInput = document.getElementById("newBotName");
+    const newBotIdInput = document.getElementById("newBotId");
+    const createBotDropdown = document.getElementById("createBotDropdown");
     const createBotBtn = document.getElementById("createBotBtn");
     const newSessionBtn = document.getElementById("newSessionBtn");
     const refreshSessionsBtn = document.getElementById("refreshSessionsBtn");
@@ -5832,12 +5927,13 @@ def create_app() -> Flask:
       if (!resp.ok) throw new Error(data.error || "failed to list bots");
 
       const bots = Array.isArray(data.bots) ? data.bots : [];
-      botListEl.innerHTML = "";
+      botSelectEl.innerHTML = "";
       if (!bots.length) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "No BOT_IDs yet.";
-        botListEl.appendChild(empty);
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No BOT_IDs yet";
+        botSelectEl.appendChild(option);
+        botSelectEl.disabled = true;
         selectedBotId = "";
         selectedSessionId = "";
         pendingSessionIds.clear();
@@ -5851,6 +5947,7 @@ def create_app() -> Flask:
         setStatus("No bots yet. Create one to start chatting.");
         return;
       }
+      botSelectEl.disabled = false;
 
       if (preferredBotId && bots.some((b) => b.bot_id === preferredBotId)) {
         selectedBotId = preferredBotId;
@@ -5859,19 +5956,15 @@ def create_app() -> Flask:
       }
 
       for (const bot of bots) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "item" + (bot.bot_id === selectedBotId ? " active" : "");
-        btn.textContent = bot.name + " (" + bot.bot_id + ")";
-        btn.title = "Model: " + (bot.model || "") + (bot.telegram_enabled ? " | Telegram linked" : " | Telegram not linked");
-        btn.onclick = async () => {
-          selectedBotId = bot.bot_id;
-          selectedSessionId = "";
-          pendingSessionIds.clear();
-          stopToolProgressStream();
-          await loadBots(selectedBotId);
-        };
-        botListEl.appendChild(btn);
+        const option = document.createElement("option");
+        option.value = String(bot.bot_id || "");
+        option.textContent = String(bot.name || bot.bot_id || "") + " (" + String(bot.bot_id || "") + ")";
+        option.title = "Model: " + (bot.model || "") + (bot.telegram_enabled ? " | Telegram linked" : " | Telegram not linked");
+        botSelectEl.appendChild(option);
+      }
+
+      if (selectedBotId) {
+        botSelectEl.value = selectedBotId;
       }
 
       await loadSelectedBot();
@@ -6169,16 +6262,40 @@ def create_app() -> Flask:
       }
     }
 
+    botSelectEl.addEventListener("change", async () => {
+      const nextBotId = String(botSelectEl.value || "").trim();
+      if (!nextBotId || nextBotId === selectedBotId) {
+        setChips();
+        return;
+      }
+      selectedBotId = nextBotId;
+      selectedSessionId = "";
+      pendingSessionIds.clear();
+      stopToolProgressStream();
+      try {
+        await loadBots(selectedBotId);
+      } catch (err) {
+        addMessage("Bot selection error: " + err, "error");
+      }
+    });
+
     createBotBtn.addEventListener("click", async () => {
       try {
+        const payload = {};
+        const nameValue = (newBotNameInput.value || "").trim();
+        const botIdValue = (newBotIdInput.value || "").trim();
+        if (nameValue) payload.name = nameValue;
+        if (botIdValue) payload.bot_id = botIdValue;
         const resp = await fetch("/api/bots", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: (newBotNameInput.value || "").trim() })
+          body: JSON.stringify(payload)
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || "failed to create bot");
         newBotNameInput.value = "";
+        newBotIdInput.value = "";
+        if (createBotDropdown) createBotDropdown.removeAttribute("open");
         selectedBotId = String((data.bot || {}).bot_id || "");
         selectedSessionId = "";
         pendingSessionIds.clear();
